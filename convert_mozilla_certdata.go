@@ -17,7 +17,7 @@
 // certificates in PEM form.
 //
 // A current version of certdata.txt can be downloaded from:
-//   http://mxr.mozilla.org/mozilla/source/security/nss/lib/ckfw/builtins/certdata.txt?raw=1
+//   https://mxr.mozilla.org/mozilla/source/security/nss/lib/ckfw/builtins/certdata.txt?raw=1
 package main
 
 import (
