@@ -23,7 +23,10 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"crypto"
+	_ "crypto/md5"
 	"crypto/sha1"
+	_ "crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
@@ -221,6 +224,9 @@ func outputTrustedCerts(out *os.File, objects []*Object) {
 		out.WriteString("# Subject: " + nameToString(x509.Subject) + "\n")
 		out.WriteString("# Label: " + label + "\n")
 		out.WriteString("# Serial: " + x509.SerialNumber.String() + "\n")
+		out.WriteString("# MD5 Fingerprint: " + fingerprintString(crypto.MD5, x509.Raw) + "\n")
+		out.WriteString("# SHA1 Fingerprint: " + fingerprintString(crypto.SHA1, x509.Raw) + "\n")
+		out.WriteString("# SHA256 Fingerprint: " + fingerprintString(crypto.SHA256, x509.Raw) + "\n")
 		pem.Encode(out, &pem.Block{Type: "CERTIFICATE", Bytes: derBytes})
 	}
 }
@@ -302,4 +308,26 @@ func getLine(in *bufio.Reader, lineNo *int) (string, bool) {
 		log.Fatalf("Line too long while reading line %d", *lineNo)
 	}
 	return string(line), false
+}
+
+func fingerprintString(hashFunc crypto.Hash, data []byte) string {
+	hash := hashFunc.New()
+	hash.Write(data)
+	digest := hash.Sum(nil)
+
+	hex := fmt.Sprintf("%x", digest)
+	ret := ""
+	for len(hex) > 0 {
+		if len(ret) > 0 {
+			ret += ":"
+		}
+		todo := 2
+		if len(hex) < todo {
+			todo = len(hex)
+		}
+		ret += hex[:todo]
+		hex = hex[todo:]
+	}
+
+	return ret
 }
