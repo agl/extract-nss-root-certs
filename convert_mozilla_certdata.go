@@ -51,13 +51,15 @@ type Attribute struct {
 	value    []byte
 }
 
+var includedUntrustedFlag = flag.Bool("include-untrusted", false, "If set, untrusted certificates will also be included in the output")
+
 func main() {
 	flag.Parse()
 
 	inFilename := "certdata.txt"
-	if len(os.Args) == 2 {
-		inFilename = os.Args[1]
-	} else if len(os.Args) > 2 {
+	if len(flag.Args()) == 1 {
+		inFilename = flag.Arg(0)
+	} else if len(flag.Args()) > 1 {
 		fmt.Printf("Usage: %s [<certdata.txt file>]\n", os.Args[0])
 		os.Exit(1)
 	}
@@ -206,20 +208,30 @@ func outputTrustedCerts(out *os.File, objects []*Object) {
 		if len(trustType) == 0 {
 			log.Fatalf("No CKA_TRUST_SERVER_AUTH found in trust starting at line %d", trust.startingLine)
 		}
+
+		var trusted bool
 		switch string(trustType) {
 		case "CKT_NSS_NOT_TRUSTED":
 			// An explicitly distrusted cert
-			continue
+			trusted = false
 		case "CKT_NSS_TRUSTED_DELEGATOR":
 			// A cert trusted for issuing SSL server certs.
+			trusted = true
 		case "CKT_NSS_TRUST_UNKNOWN", "CKT_NSS_MUST_VERIFY_TRUST":
 			// A cert not trusted for issuing SSL server certs, but is trusted for other purposes.
-			continue
+			trusted = false
 		default:
 			log.Fatalf("Unknown trust value '%s' found for trust record starting on line %d", trustType, trust.startingLine)
 		}
 
+		if (!trusted && !*includedUntrustedFlag) {
+			continue
+		}
+
 		out.WriteString("\n")
+		if !trusted {
+			out.WriteString("# NOT TRUSTED FOR SSL\n")
+		}
 		out.WriteString("# Issuer: " + nameToString(x509.Issuer) + "\n")
 		out.WriteString("# Subject: " + nameToString(x509.Subject) + "\n")
 		out.WriteString("# Label: " + label + "\n")
