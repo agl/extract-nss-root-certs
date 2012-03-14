@@ -9,11 +9,6 @@ Several people have written quick scripts to try and convert this into PEM forma
 
 So this is a tool that I wrote for converting the NSS file to PEM format which is also aware of the trust records. It can be built with Go1. See http://golang.org/doc/install.html, but don't pass "-u release" when fetching the repository.
 
-One you have Go installed, run:
+One you have Go installed then you can download the NSS data file (URL above) into certdata.txt and run:
 
-    % go tool 6g convert_mozilla_certdata.go
-    % go tool 6l -o convert_mozilla_certdata convert_mozilla_certdata.6
-
-Then you can download the NSS data file (URL above) into certdata.txt and run:
-
-    % ./convert_mozilla_certdata
+    % go run convert_mozilla_certdata.go
