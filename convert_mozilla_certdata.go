@@ -88,7 +88,7 @@ func parseInput(inFile io.Reader) (license, cvsId string, objects []*Object) {
 
 	// Discard anything prior to the license block.
 	for line, eof := getLine(in, &lineNo); !eof; line, eof = getLine(in, &lineNo) {
-		if strings.Contains(line, "BEGIN LICENSE BLOCK") {
+		if strings.Contains(line, "This Source Code") {
 			license += line
 			license += "\n"
 			break
@@ -99,14 +99,11 @@ func parseInput(inFile io.Reader) (license, cvsId string, objects []*Object) {
 	}
 	// Now collect the license block.
 	for line, eof := getLine(in, &lineNo); !eof; line, eof = getLine(in, &lineNo) {
-		license += line
-		license += "\n"
-		if strings.Contains(line, "END LICENSE BLOCK") {
+		if strings.Contains(line, "CVS_ID") {
 			break
 		}
-	}
-	if !strings.Contains(license, "END LICENSE BLOCK") {
-		log.Fatalf("Read whole input and failed to find end of license")
+		license += line
+		license += "\n"
 	}
 
 	var currentObject *Object
