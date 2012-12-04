@@ -221,7 +221,7 @@ func outputTrustedCerts(out *os.File, objects []*Object) {
 			log.Fatalf("Unknown trust value '%s' found for trust record starting on line %d", trustType, trust.startingLine)
 		}
 
-		if (!trusted && !*includedUntrustedFlag) {
+		if !trusted && !*includedUntrustedFlag {
 			continue
 		}
 
