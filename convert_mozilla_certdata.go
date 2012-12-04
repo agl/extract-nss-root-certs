@@ -52,7 +52,8 @@ type Attribute struct {
 }
 
 // ignoreList contains the names of certificates to ignore
-var ignoreList map[string]bool
+// the value can be an optional comment
+var ignoreList map[string]string
 
 var includedUntrustedFlag = flag.Bool("include-untrusted", false, "If set, untrusted certificates will also be included in the output")
 
@@ -69,7 +70,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	ignoreList = make(map[string]bool)
+	ignoreList = make(map[string]string)
 	if *ignoreListFilename != "" {
 		ignoreListFile, err := os.Open(*ignoreListFilename)
 		if err != nil {
@@ -101,7 +102,12 @@ func parseIgnoreList(ignoreListFile io.Reader) {
 	var lineNo int
 
 	for line, eof := getLine(in, &lineNo); !eof; line, eof = getLine(in, &lineNo) {
-		ignoreList[line] = true
+		if splitted := strings.SplitN(line, "#", 2); len(splitted) == 2 {
+			// this line has an additional comment
+			ignoreList[strings.TrimSpace(splitted[0])] = strings.TrimSpace(splitted[1])
+		} else {
+			ignoreList[line] = ""
+		}
 	}
 }
 
@@ -199,8 +205,8 @@ func outputTrustedCerts(out *os.File, objects []*Object) {
 		digest := hash.Sum(nil)
 
 		label := string(cert.attrs["CKA_LABEL"].value)
-		if _, present := ignoreList[strings.Trim(label, "\"")]; present {
-			log.Printf("Skipping explicitly ignored certificate: %s", label)
+		if comment, present := ignoreList[strings.Trim(label, "\"")]; present {
+			log.Printf("Skipping explicitly ignored certificate: %s: %s", label, comment)
 			continue
 		}
 
