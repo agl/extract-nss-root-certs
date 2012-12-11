@@ -51,8 +51,8 @@ type Attribute struct {
 	value    []byte
 }
 
-// ignoreList contains the names of certificates to ignore
-// the value can be an optional comment
+// ignoreList maps from CKA_LABEL values (from the upstream roots file) to an optional comment
+// which is displayed when skipping matching certificates.
 var ignoreList map[string]string
 
 var includedUntrustedFlag = flag.Bool("include-untrusted", false, "If set, untrusted certificates will also be included in the output")
