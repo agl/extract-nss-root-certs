@@ -206,7 +206,11 @@ func outputTrustedCerts(out *os.File, objects []*Object) {
 
 		label := string(cert.attrs["CKA_LABEL"].value)
 		if comment, present := ignoreList[strings.Trim(label, "\"")]; present {
-			log.Printf("Skipping explicitly ignored certificate: %s: %s", label, comment)
+			var sep string
+			if len(comment) > 0 {
+				sep = ": "
+			}
+			log.Printf("Skipping explicitly ignored certificate: %s%s%s", label, sep, comment)
 			continue
 		}
 
