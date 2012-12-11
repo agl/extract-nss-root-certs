@@ -102,9 +102,9 @@ func parseIgnoreList(ignoreListFile io.Reader) {
 	var lineNo int
 
 	for line, eof := getLine(in, &lineNo); !eof; line, eof = getLine(in, &lineNo) {
-		if splitted := strings.SplitN(line, "#", 2); len(splitted) == 2 {
+		if split := strings.SplitN(line, "#", 2); len(split) == 2 {
 			// this line has an additional comment
-			ignoreList[strings.TrimSpace(splitted[0])] = strings.TrimSpace(splitted[1])
+			ignoreList[strings.TrimSpace(split[0])] = strings.TrimSpace(split[1])
 		} else {
 			ignoreList[line] = ""
 		}
