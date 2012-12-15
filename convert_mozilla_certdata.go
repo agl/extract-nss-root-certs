@@ -51,9 +51,15 @@ type Attribute struct {
 	value    []byte
 }
 
+// ignoreList maps from CKA_LABEL values (from the upstream roots file) to an optional comment
+// which is displayed when skipping matching certificates.
+var ignoreList map[string]string
+
 var includedUntrustedFlag = flag.Bool("include-untrusted", false, "If set, untrusted certificates will also be included in the output")
 
 func main() {
+	ignoreListFilename := flag.String("ignore-list", "", "File containing a list of certificates to ignore")
+
 	flag.Parse()
 
 	inFilename := "certdata.txt"
@@ -62,6 +68,16 @@ func main() {
 	} else if len(flag.Args()) > 1 {
 		fmt.Printf("Usage: %s [<certdata.txt file>]\n", os.Args[0])
 		os.Exit(1)
+	}
+
+	ignoreList = make(map[string]string)
+	if *ignoreListFilename != "" {
+		ignoreListFile, err := os.Open(*ignoreListFilename)
+		if err != nil {
+			log.Fatalf("Failed to open ignore-list file: %s", err)
+		}
+		parseIgnoreList(ignoreListFile)
+		ignoreListFile.Close()
 	}
 
 	inFile, err := os.Open(inFilename)
@@ -78,6 +94,21 @@ func main() {
 	}
 
 	outputTrustedCerts(os.Stdout, objects)
+}
+
+// parseIgnoreList parses the ignore-list file into ignoreList
+func parseIgnoreList(ignoreListFile io.Reader) {
+	in := bufio.NewReader(ignoreListFile)
+	var lineNo int
+
+	for line, eof := getLine(in, &lineNo); !eof; line, eof = getLine(in, &lineNo) {
+		if split := strings.SplitN(line, "#", 2); len(split) == 2 {
+			// this line has an additional comment
+			ignoreList[strings.TrimSpace(split[0])] = strings.TrimSpace(split[1])
+		} else {
+			ignoreList[line] = ""
+		}
+	}
 }
 
 // parseInput parses a certdata.txt file into it's license blob, the CVS id (if
@@ -173,6 +204,16 @@ func outputTrustedCerts(out *os.File, objects []*Object) {
 		hash.Write(derBytes)
 		digest := hash.Sum(nil)
 
+		label := string(cert.attrs["CKA_LABEL"].value)
+		if comment, present := ignoreList[strings.Trim(label, "\"")]; present {
+			var sep string
+			if len(comment) > 0 {
+				sep = ": "
+			}
+			log.Printf("Skipping explicitly ignored certificate: %s%s%s", label, sep, comment)
+			continue
+		}
+
 		x509, err := x509.ParseCertificate(derBytes)
 		if err != nil {
 			// This is known to occur because of a broken certificate in NSS.
@@ -180,8 +221,6 @@ func outputTrustedCerts(out *os.File, objects []*Object) {
 			log.Printf("Failed to parse certificate starting on line %d: %s", cert.startingLine, err)
 			continue
 		}
-
-		label := string(cert.attrs["CKA_LABEL"].value)
 
 		// TODO(agl): wtc tells me that Mozilla might get rid of the
 		// SHA1 records in the future and use issuer and serial number
@@ -221,7 +260,7 @@ func outputTrustedCerts(out *os.File, objects []*Object) {
 			log.Fatalf("Unknown trust value '%s' found for trust record starting on line %d", trustType, trust.startingLine)
 		}
 
-		if (!trusted && !*includedUntrustedFlag) {
+		if !trusted && !*includedUntrustedFlag {
 			continue
 		}
 
