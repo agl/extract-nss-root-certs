@@ -37,6 +37,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 // Object represents a collection of attributes from the certdata.txt file
@@ -52,6 +53,7 @@ type Attribute struct {
 }
 
 var includedUntrustedFlag = flag.Bool("include-untrusted", false, "If set, untrusted certificates will also be included in the output")
+var toFiles = flag.Bool("to-files", false, "If set, individual certificate files will be created in the current directory")
 
 func main() {
 	flag.Parse()
@@ -72,9 +74,11 @@ func main() {
 	license, cvsId, objects := parseInput(inFile)
 	inFile.Close()
 
-	os.Stdout.WriteString(license)
-	if len(cvsId) > 0 {
-		os.Stdout.WriteString("CVS_ID " + cvsId + "\n")
+	if !*toFiles {
+		os.Stdout.WriteString(license)
+		if len(cvsId) > 0 {
+			os.Stdout.WriteString("CVS_ID " + cvsId + "\n")
+		}
 	}
 
 	outputTrustedCerts(os.Stdout, objects)
@@ -166,6 +170,7 @@ func parseInput(inFile io.Reader) (license, cvsId string, objects []*Object) {
 func outputTrustedCerts(out *os.File, objects []*Object) {
 	certs := filterObjectsByClass(objects, "CKO_CERTIFICATE")
 	trusts := filterObjectsByClass(objects, "CKO_NSS_TRUST")
+	filenames := make(map[string]bool)
 
 	for _, cert := range certs {
 		derBytes := cert.attrs["CKA_VALUE"].value
@@ -221,7 +226,41 @@ func outputTrustedCerts(out *os.File, objects []*Object) {
 			log.Fatalf("Unknown trust value '%s' found for trust record starting on line %d", trustType, trust.startingLine)
 		}
 
-		if (!trusted && !*includedUntrustedFlag) {
+		if !trusted && !*includedUntrustedFlag {
+			continue
+		}
+
+		block := &pem.Block{Type: "CERTIFICATE", Bytes: derBytes}
+
+		if *toFiles {
+			if strings.HasPrefix(label, "\"") {
+				label = label[1:]
+			}
+			if strings.HasSuffix(label, "\"") {
+				label = label[:len(label)-1]
+			}
+			// The label may contain hex-escaped, UTF-8 charactors.
+			label = unescapeLabel(label)
+			label = strings.Replace(label, " ", "_", -1)
+			label = strings.Replace(label, "/", "_", -1)
+
+			filename := label
+			for i := 2; ; i++ {
+				if _, ok := filenames[filename]; !ok {
+					break
+				}
+
+				filename = label + "-" + strconv.Itoa(i)
+			}
+			filenames[filename] = true
+
+			file, err := os.Create(filename+".pem")
+			if err != nil {
+				log.Fatalf("Failed to create output file: %s\n", err)
+			}
+			pem.Encode(file, block)
+			file.Close()
+			out.WriteString(filename + ".pem\n")
 			continue
 		}
 
@@ -229,6 +268,7 @@ func outputTrustedCerts(out *os.File, objects []*Object) {
 		if !trusted {
 			out.WriteString("# NOT TRUSTED FOR SSL\n")
 		}
+
 		out.WriteString("# Issuer: " + nameToString(x509.Issuer) + "\n")
 		out.WriteString("# Subject: " + nameToString(x509.Subject) + "\n")
 		out.WriteString("# Label: " + label + "\n")
@@ -236,7 +276,7 @@ func outputTrustedCerts(out *os.File, objects []*Object) {
 		out.WriteString("# MD5 Fingerprint: " + fingerprintString(crypto.MD5, x509.Raw) + "\n")
 		out.WriteString("# SHA1 Fingerprint: " + fingerprintString(crypto.SHA1, x509.Raw) + "\n")
 		out.WriteString("# SHA256 Fingerprint: " + fingerprintString(crypto.SHA256, x509.Raw) + "\n")
-		pem.Encode(out, &pem.Block{Type: "CERTIFICATE", Bytes: derBytes})
+		pem.Encode(out, block)
 	}
 }
 
@@ -339,4 +379,85 @@ func fingerprintString(hashFunc crypto.Hash, data []byte) string {
 	}
 
 	return ret
+}
+
+func isHex(c rune) (value byte, ok bool) {
+	switch {
+	case c >= '0' && c <= '9':
+		return byte(c) - '0', true
+	case c >= 'a' && c <= 'f':
+		return byte(c) - 'a' + 10, true
+	case c >= 'A' && c <= 'F':
+		return byte(c) - 'A' + 10, true
+	}
+
+	return 0, false
+}
+
+func appendRune(out []byte, r rune) []byte {
+	if r < 128 {
+		return append(out, byte(r))
+	}
+
+	var buf [utf8.UTFMax]byte
+	n := utf8.EncodeRune(buf[:], r)
+	return append(out, buf[:n]...)
+}
+
+// unescapeLabel unescapes "\xab" style hex-escapes.
+func unescapeLabel(escaped string) string {
+	var out []byte
+	var last rune
+	var value byte
+	state := 0
+
+	for _, r := range escaped {
+		switch state {
+		case 0:
+			if r == '\\' {
+				state++
+				continue
+			}
+		case 1:
+			if r == 'x' {
+				state++
+				continue
+			}
+			out = append(out, '\\')
+		case 2:
+			if v, ok := isHex(r); ok {
+				value = v
+				last = r
+				state++
+				continue
+			} else {
+				out = append(out, '\\', 'x')
+			}
+		case 3:
+			if v, ok := isHex(r); ok {
+				value <<= 4
+				value += v
+				out = append(out, byte(value))
+				state = 0
+				continue
+			} else {
+				out = append(out, '\\', 'x')
+				out = appendRune(out, last)
+			}
+		}
+		state = 0
+		out = appendRune(out, r)
+	}
+
+	switch state {
+	case 3:
+		out = append(out, '\\', 'x')
+		out = appendRune(out, last)
+	case 2:
+		out = append(out, '\\', 'x')
+	case 1:
+		out = append(out, '\\')
+	}
+
+	return string(out)
 }
