@@ -17,7 +17,7 @@
 // certificates in PEM form.
 //
 // A current version of certdata.txt can be downloaded from:
-//   https://mxr.mozilla.org/mozilla/source/security/nss/lib/ckfw/builtins/certdata.txt?raw=1
+//   https://hg.mozilla.org/mozilla-central/raw-file/tip/security/nss/lib/ckfw/builtins/certdata.txt
 package main
 
 import (
@@ -146,8 +146,7 @@ func parseInput(inFile io.Reader) (license, cvsId string, objects []*Object) {
 	}
 
 	var currentObject *Object
-	var begindata bool
-	begindata = false
+	var beginData bool
 
 	for line, eof := getLine(in, &lineNo); !eof; line, eof = getLine(in, &lineNo) {
 		if len(line) == 0 || line[0] == '#' {
@@ -159,7 +158,7 @@ func parseInput(inFile io.Reader) (license, cvsId string, objects []*Object) {
 			continue
 		}
 		if line == "BEGINDATA" {
-			begindata = true
+			beginData = true
 			continue
 		}
 
@@ -195,8 +194,8 @@ func parseInput(inFile io.Reader) (license, cvsId string, objects []*Object) {
 			value:    value,
 		}
 	}
-	
-	if !begindata {
+
+	if !beginData {
 		log.Fatalf("Read whole input and failed to find BEGINDATA")
 	}
 
