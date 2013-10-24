@@ -159,7 +159,7 @@ func parseInput(inFile io.Reader) (license, cvsId string, objects []*Object) {
 			continue
 		}
 		if line == "BEGINDATA" {
-            begindata = true
+			begindata = true
 			continue
 		}
 
