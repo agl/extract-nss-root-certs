@@ -136,8 +136,9 @@ func parseInput(inFile io.Reader) (license, cvsId string, objects []*Object) {
 		log.Fatalf("Read whole input and failed to find beginning of license")
 	}
 	// Now collect the license block.
+	// certdata.txt from hg.mozilla.org no longer contains CVS_ID.
 	for line, eof := getLine(in, &lineNo); !eof; line, eof = getLine(in, &lineNo) {
-		if strings.Contains(line, "CVS_ID") {
+		if strings.Contains(line, "CVS_ID") || len(line) == 0 {
 			break
 		}
 		license += line
@@ -145,6 +146,8 @@ func parseInput(inFile io.Reader) (license, cvsId string, objects []*Object) {
 	}
 
 	var currentObject *Object
+	var begindata bool
+	begindata = false
 
 	for line, eof := getLine(in, &lineNo); !eof; line, eof = getLine(in, &lineNo) {
 		if len(line) == 0 || line[0] == '#' {
@@ -156,6 +159,7 @@ func parseInput(inFile io.Reader) (license, cvsId string, objects []*Object) {
 			continue
 		}
 		if line == "BEGINDATA" {
+			begindata = true
 			continue
 		}
 
@@ -190,6 +194,10 @@ func parseInput(inFile io.Reader) (license, cvsId string, objects []*Object) {
 			attrType: words[1],
 			value:    value,
 		}
+	}
+	
+	if !begindata {
+		log.Fatalf("Read whole input and failed to find BEGINDATA")
 	}
 
 	if currentObject != nil {
