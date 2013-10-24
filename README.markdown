@@ -11,5 +11,5 @@ So this is a tool that I wrote for converting the NSS file to PEM format which i
 
 One you have Go installed please do the following:
 
-    % curl https://mxr.mozilla.org/mozilla/source/security/nss/lib/ckfw/builtins/certdata.txt\?raw\=1 -o certdata.txt
+    % curl https://hg.mozilla.org/mozilla-central/raw-file/tip/security/nss/lib/ckfw/builtins/certdata.txt -o certdata.txt
     % go run convert_mozilla_certdata.go > certdata.new
