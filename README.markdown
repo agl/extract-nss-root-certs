@@ -13,3 +13,8 @@ Once you have Go installed please do the following:
 
     % curl https://hg.mozilla.org/mozilla-central/raw-file/tip/security/nss/lib/ckfw/builtins/certdata.txt -o certdata.txt
     % go run convert_mozilla_certdata.go > certdata.new
+
+**Other Implementations**
+
+  * Node.js <https://github.com/coolaj86/node-ssl-root-cas>
+  * Perl <https://github.com/bagder/curl/blob/master/lib/mk-ca-bundle.pl>
