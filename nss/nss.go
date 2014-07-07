@@ -18,7 +18,7 @@
 //
 // A current version of certdata.txt can be downloaded from:
 //   https://hg.mozilla.org/mozilla-central/raw-file/tip/security/nss/lib/ckfw/builtins/certdata.txt
-package main
+package nss
 
 import (
 	"bufio"
@@ -30,7 +30,6 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
-	"flag"
 	"fmt"
 	"io"
 	"log"
@@ -53,74 +52,35 @@ type Attribute struct {
 }
 
 var (
-	// ignoreList maps from CKA_LABEL values (from the upstream roots file)
+	// IgnoreList maps from CKA_LABEL values (from the upstream roots file)
 	// to an optional comment which is displayed when skipping matching
 	// certificates.
-	ignoreList map[string]string
 
-	includedUntrustedFlag = flag.Bool("include-untrusted", false, "If set, untrusted certificates will also be included in the output")
-	toFiles               = flag.Bool("to-files", false, "If set, individual certificate files will be created in the current directory")
-	ignoreListFilename    = flag.String("ignore-list", "", "File containing a list of certificates to ignore")
+	IgnoreList map[string]string
 )
 
-func main() {
+var IncludedUntrustedFlag *bool
+var ToFiles *bool
 
-	flag.Parse()
 
-	inFilename := "certdata.txt"
-	if len(flag.Args()) == 1 {
-		inFilename = flag.Arg(0)
-	} else if len(flag.Args()) > 1 {
-		fmt.Printf("Usage: %s [<certdata.txt file>]\n", os.Args[0])
-		os.Exit(1)
-	}
-
-	ignoreList = make(map[string]string)
-	if *ignoreListFilename != "" {
-		ignoreListFile, err := os.Open(*ignoreListFilename)
-		if err != nil {
-			log.Fatalf("Failed to open ignore-list file: %s", err)
-		}
-		parseIgnoreList(ignoreListFile)
-		ignoreListFile.Close()
-	}
-
-	inFile, err := os.Open(inFilename)
-	if err != nil {
-		log.Fatalf("Failed to open input file: %s", err)
-	}
-
-	license, cvsId, objects := parseInput(inFile)
-	inFile.Close()
-
-	if !*toFiles {
-		os.Stdout.WriteString(license)
-		if len(cvsId) > 0 {
-			os.Stdout.WriteString("CVS_ID " + cvsId + "\n")
-		}
-	}
-
-	outputTrustedCerts(os.Stdout, objects)
-}
-
-// parseIgnoreList parses the ignore-list file into ignoreList
-func parseIgnoreList(ignoreListFile io.Reader) {
-	in := bufio.NewReader(ignoreListFile)
+// parseIgnoreList parses the ignore-list file into IgnoreList
+func ParseIgnoreList(IgnoreListFile io.Reader) {
+	in := bufio.NewReader(IgnoreListFile)
 	var lineNo int
 
 	for line, eof := getLine(in, &lineNo); !eof; line, eof = getLine(in, &lineNo) {
 		if split := strings.SplitN(line, "#", 2); len(split) == 2 {
 			// this line has an additional comment
-			ignoreList[strings.TrimSpace(split[0])] = strings.TrimSpace(split[1])
+			IgnoreList[strings.TrimSpace(split[0])] = strings.TrimSpace(split[1])
 		} else {
-			ignoreList[line] = ""
+			IgnoreList[line] = ""
 		}
 	}
 }
 
 // parseInput parses a certdata.txt file into it's license blob, the CVS id (if
 // included) and a set of Objects.
-func parseInput(inFile io.Reader) (license, cvsId string, objects []*Object) {
+func ParseInput(inFile io.Reader) (license, cvsId string, objects []*Object) {
 	in := bufio.NewReader(inFile)
 	var lineNo int
 
@@ -208,7 +168,7 @@ func parseInput(inFile io.Reader) (license, cvsId string, objects []*Object) {
 
 // outputTrustedCerts writes a series of PEM encoded certificates to out by
 // finding certificates and their trust records in objects.
-func outputTrustedCerts(out *os.File, objects []*Object) {
+func OutputTrustedCerts(out *os.File, objects []*Object) {
 	certs := filterObjectsByClass(objects, "CKO_CERTIFICATE")
 	trusts := filterObjectsByClass(objects, "CKO_NSS_TRUST")
 	filenames := make(map[string]bool)
@@ -220,7 +180,7 @@ func outputTrustedCerts(out *os.File, objects []*Object) {
 		digest := hash.Sum(nil)
 
 		label := string(cert.attrs["CKA_LABEL"].value)
-		if comment, present := ignoreList[strings.Trim(label, "\"")]; present {
+		if comment, present := IgnoreList[strings.Trim(label, "\"")]; present {
 			var sep string
 			if len(comment) > 0 {
 				sep = ": "
@@ -275,13 +235,13 @@ func outputTrustedCerts(out *os.File, objects []*Object) {
 			log.Fatalf("Unknown trust value '%s' found for trust record starting on line %d", trustType, trust.startingLine)
 		}
 
-		if !trusted && !*includedUntrustedFlag {
+		if !trusted && !*IncludedUntrustedFlag {
 			continue
 		}
 
 		block := &pem.Block{Type: "CERTIFICATE", Bytes: derBytes}
 
-		if *toFiles {
+		if *ToFiles {
 			if strings.HasPrefix(label, "\"") {
 				label = label[1:]
 			}
