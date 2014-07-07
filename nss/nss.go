@@ -36,7 +36,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"unicode/utf8"
+	//"unicode/utf8"
 )
 
 // Object represents a collection of attributes from the certdata.txt file
@@ -373,100 +373,52 @@ func fingerprintString(hashFunc crypto.Hash, data []byte) string {
 	hash.Write(data)
 	digest := hash.Sum(nil)
 
-	hex := fmt.Sprintf("%x", digest)
-	ret := ""
-	for len(hex) > 0 {
-		if len(ret) > 0 {
-			ret += ":"
-		}
-		todo := 2
-		if len(hex) < todo {
-			todo = len(hex)
-		}
-		ret += hex[:todo]
-		hex = hex[todo:]
-	}
-
-	return ret
-}
-
-func isHex(c rune) (value byte, ok bool) {
-	switch {
-	case c >= '0' && c <= '9':
-		return byte(c) - '0', true
-	case c >= 'a' && c <= 'f':
-		return byte(c) - 'a' + 10, true
-	case c >= 'A' && c <= 'F':
-		return byte(c) - 'A' + 10, true
-	}
-
-	return 0, false
-}
-
-func appendRune(out []byte, r rune) []byte {
-	if r < 128 {
-		return append(out, byte(r))
-	}
-
-	var buf [utf8.UTFMax]byte
-	n := utf8.EncodeRune(buf[:], r)
-	return append(out, buf[:n]...)
+	// Print out Hex numbers with a space, then replace that space with a colon.
+	return strings.Replace(fmt.Sprintf("% x", digest), " ", ":", -1)
 }
 
 // unescapeLabel unescapes "\xab" style hex-escapes.
 func unescapeLabel(escaped string) string {
-	var out []byte
-	var last rune
-	var value byte
-	state := 0
 
-	for _, r := range escaped {
-		switch state {
-		case 0:
-			if r == '\\' {
-				state++
-				continue
+	// The variable that will hold the bytes of the output string
+	var b []byte
+
+	// Loop through the string and split on `\x`
+	fn := func(data []byte, atEOF bool) (advance int, token []byte, err error) {
+		
+		// If you find the string `\x` then we have a hex character
+		if string(data[0:1]) == `\x` {
+
+			// We know that the encoding will always take up 4 bytes (i.e. "\xab"), so just advance the counter by that much.
+			advance = 4
+
+			// Grab the hex value of the string as a real number
+			tb, err := strconv.ParseUint(string(data[0:1]), 16, 8)
+			if err != nil {
+				// We have an error, so return the error, and advance the token by one.
+				return 1, []byte{data[0]}, err
 			}
-		case 1:
-			if r == 'x' {
-				state++
-				continue
-			}
-			out = append(out, '\\')
-		case 2:
-			if v, ok := isHex(r); ok {
-				value = v
-				last = r
-				state++
-				continue
-			} else {
-				out = append(out, '\\', 'x')
-			}
-		case 3:
-			if v, ok := isHex(r); ok {
-				value <<= 4
-				value += v
-				out = append(out, byte(value))
-				state = 0
-				continue
-			} else {
-				out = append(out, '\\', 'x')
-				out = appendRune(out, last)
-			}
+			
+			// Take the number that was converted from a string, and convert it to a byte.
+			token = []byte{byte(tb)}
+			
+			// Advance the scanner by 4 bytes, then return the actual single byte generated from the hex number
+			return advance, token, nil
 		}
-		state = 0
-		out = appendRune(out, r)
+
+		// Nothing was found, so advance the scanner by one, and return the previous byte as it was.
+		return 1, []byte{data[0]}, nil // Advance one byte at a time
 	}
 
-	switch state {
-	case 3:
-		out = append(out, '\\', 'x')
-		out = appendRune(out, last)
-	case 2:
-		out = append(out, '\\', 'x')
-	case 1:
-		out = append(out, '\\')
+	// Set up a new scanner, and add the escaped string to it.
+	sn := bufio.NewScanner(strings.NewReader(escaped))
+	sn.Split(fn)
+
+	// Loop through all of the tokens appending bytes until we hit a EOF.
+	for sn.Scan() {
+		b = append(b, sn.Bytes()...)
 	}
 
-	return string(out)
+	// Convert all of the actual bytes to a string.
+	return string(b)
 }
