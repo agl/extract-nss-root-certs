@@ -36,7 +36,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	//"unicode/utf8"
 )
 
 // Object represents a collection of attributes from the certdata.txt file
@@ -65,10 +64,10 @@ var ToFiles *bool
 
 // parseIgnoreList parses the ignore-list file into IgnoreList
 func ParseIgnoreList(IgnoreListFile io.Reader) {
-	in := bufio.NewReader(IgnoreListFile)
-	var lineNo int
+	in := bufio.NewScanner(IgnoreListFile)
 
-	for line, eof := getLine(in, &lineNo); !eof; line, eof = getLine(in, &lineNo) {
+	for in.Scan() {
+		line := in.Text()
 		if split := strings.SplitN(line, "#", 2); len(split) == 2 {
 			// this line has an additional comment
 			IgnoreList[strings.TrimSpace(split[0])] = strings.TrimSpace(split[1])
@@ -81,34 +80,32 @@ func ParseIgnoreList(IgnoreListFile io.Reader) {
 // parseInput parses a certdata.txt file into it's license blob, the CVS id (if
 // included) and a set of Objects.
 func ParseInput(inFile io.Reader) (license, cvsId string, objects []*Object) {
-	in := bufio.NewReader(inFile)
+	in := bufio.NewScanner(inFile)
 	var lineNo int
 
-	// Discard anything prior to the license block.
-	for line, eof := getLine(in, &lineNo); !eof; line, eof = getLine(in, &lineNo) {
-		if strings.Contains(line, "This Source Code") {
-			license += line
-			license += "\n"
-			break
-		}
-	}
-	if len(license) == 0 {
-		log.Fatalf("Read whole input and failed to find beginning of license")
-	}
-	// Now collect the license block.
-	// certdata.txt from hg.mozilla.org no longer contains CVS_ID.
-	for line, eof := getLine(in, &lineNo); !eof; line, eof = getLine(in, &lineNo) {
-		if strings.Contains(line, "CVS_ID") || len(line) == 0 {
-			break
-		}
-		license += line
-		license += "\n"
-	}
-
+	// Collect the license block
+	var collectLicense bool
 	var currentObject *Object
 	var beginData bool
 
-	for line, eof := getLine(in, &lineNo); !eof; line, eof = getLine(in, &lineNo) {
+	for in.Scan() {
+		line := in.Text()
+		lineNo += 1
+		if strings.Contains(line, "This Source Code") {
+			collectLicense = true
+			license += line
+			continue
+		}
+		if collectLicense && strings.Contains(line, "# ") {
+			license += line
+			continue
+		}
+		if collectLicense && len(line) == 0 {
+			license += line
+			collectLicense = false
+			continue
+		}
+
 		if len(line) == 0 || line[0] == '#' {
 			continue
 		}
@@ -117,20 +114,17 @@ func ParseInput(inFile io.Reader) (license, cvsId string, objects []*Object) {
 			cvsId = line[7:]
 			continue
 		}
+
 		if line == "BEGINDATA" {
 			beginData = true
 			continue
 		}
 
-		words := strings.Fields(line)
 		var value []byte
+		words := strings.Fields(line)
+
 		if len(words) == 2 && words[1] == "MULTILINE_OCTAL" {
-			startingLine := lineNo
-			var ok bool
-			value, ok = readMultilineOctal(in, &lineNo)
-			if !ok {
-				log.Fatalf("Failed to read octal value starting at line %d", startingLine)
-			}
+			value = readMultilineOctal(in, &lineNo)
 		} else if len(words) < 3 {
 			log.Fatalf("Expected three or more values on line %d, but found %d", lineNo, len(words))
 		} else {
@@ -153,6 +147,10 @@ func ParseInput(inFile io.Reader) (license, cvsId string, objects []*Object) {
 			attrType: words[1],
 			value:    value,
 		}
+	}
+
+	if len(license) == 0 {
+		log.Fatalf("Read whole input and failed to find beginning of license")
 	}
 
 	if !beginData {
@@ -327,12 +325,15 @@ func filterObjectsByClass(in []*Object, class string) (out []*Object) {
 
 // readMultilineOctal converts a series of lines of octal values into a slice
 // of bytes.
-func readMultilineOctal(in *bufio.Reader, lineNo *int) ([]byte, bool) {
+func readMultilineOctal(in *bufio.Scanner, lineNo *int) []byte {
+	
 	var value []byte
 
-	for line, eof := getLine(in, lineNo); !eof; line, eof = getLine(in, lineNo) {
+	for in.Scan() {
+		*lineNo += 1
+		line := in.Text()
 		if line == "END" {
-			return value, true
+			return value
 		}
 
 		for _, octalStr := range strings.Split(line, "\\") {
@@ -342,30 +343,12 @@ func readMultilineOctal(in *bufio.Reader, lineNo *int) ([]byte, bool) {
 			v, err := strconv.ParseUint(octalStr, 8, 8)
 			if err != nil {
 				log.Printf("error converting octal string '%s' on line %d", octalStr, *lineNo)
-				return nil, false
+				return nil
 			}
 			value = append(value, byte(v))
 		}
 	}
-
-	// Missing "END"
-	return nil, false
-}
-
-// getLine reads the next line from in, aborting in the event of an error.
-func getLine(in *bufio.Reader, lineNo *int) (string, bool) {
-	*lineNo++
-	line, isPrefix, err := in.ReadLine()
-	if err == io.EOF {
-		return "", true
-	}
-	if err != nil {
-		log.Fatalf("I/O error while reading input: %s", err)
-	}
-	if isPrefix {
-		log.Fatalf("Line too long while reading line %d", *lineNo)
-	}
-	return string(line), false
+	return nil
 }
 
 func fingerprintString(hashFunc crypto.Hash, data []byte) string {
