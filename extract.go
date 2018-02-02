@@ -1,6 +1,8 @@
 // Copyright 2012 Google Inc. All Rights Reserved.
 // Author: agl@chromium.org (Adam Langley)
 
+// This is a fork that changes this code into a library that apps can use.
+
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -18,26 +20,24 @@
 //
 // A current version of certdata.txt can be downloaded from:
 //   https://hg.mozilla.org/mozilla-central/raw-file/tip/security/nss/lib/ckfw/builtins/certdata.txt
-package main
+package nsscerts
 
 import (
 	"bufio"
 	"bytes"
 	"crypto"
-	_ "crypto/md5"
 	"crypto/sha1"
-	_ "crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
-	"encoding/pem"
-	"flag"
 	"fmt"
 	"io"
-	"log"
-	"os"
 	"strconv"
 	"strings"
 	"unicode/utf8"
+)
+
+var (
+	LatestDownloadURL = "https://hg.mozilla.org/mozilla-central/raw-file/tip/security/nss/lib/ckfw/builtins/certdata.txt"
 )
 
 // Object represents a collection of attributes from the certdata.txt file
@@ -52,88 +52,41 @@ type Attribute struct {
 	value    []byte
 }
 
-var (
-	// ignoreList maps from CKA_LABEL values (from the upstream roots file)
+type Config struct {
+	// IgnoreList maps from CKA_LABEL values (from the upstream roots file)
 	// to an optional comment which is displayed when skipping matching
 	// certificates.
-	ignoreList map[string]string
+	IgnoreList map[string]string
 
-	includedUntrustedFlag = flag.Bool("include-untrusted", false, "If set, untrusted certificates will also be included in the output")
-	toFiles               = flag.Bool("to-files", false, "If set, individual certificate files will be created in the current directory")
-	ignoreListFilename    = flag.String("ignore-list", "", "File containing a list of certificates to ignore")
-)
+	// Include untrusted certificates
+	IncludedUntrustedFlag bool
 
-func main() {
+	// Certificate <TODO>'s
+	IgnoreListFilename []string
+}
 
-	flag.Parse()
-
-	inFilename := "certdata.txt"
-	if len(flag.Args()) == 1 {
-		inFilename = flag.Arg(0)
-	} else if len(flag.Args()) > 1 {
-		fmt.Printf("Usage: %s [<certdata.txt file>]\n", os.Args[0])
-		os.Exit(1)
-	}
-
-	ignoreList = make(map[string]string)
-	if *ignoreListFilename != "" {
-		ignoreListFile, err := os.Open(*ignoreListFilename)
-		if err != nil {
-			log.Fatalf("Failed to open ignore-list file: %s", err)
-		}
-		parseIgnoreList(ignoreListFile)
-		ignoreListFile.Close()
-	}
-
-	inFile, err := os.Open(inFilename)
+// List reads `in` as a certdata.txt encoded string/file and returns the
+// parsed certificates or a non-nil error.
+func List(in io.Reader, cfg *Config) ([]*x509.Certificate, error) {
+	objects, err := parseObjects(in)
 	if err != nil {
-		log.Fatalf("Failed to open input file: %s", err)
+		return nil, err
 	}
-
-	license, cvsId, objects := parseInput(inFile)
-	inFile.Close()
-
-	if !*toFiles {
-		os.Stdout.WriteString(license)
-		if len(cvsId) > 0 {
-			os.Stdout.WriteString("CVS_ID " + cvsId + "\n")
-		}
-	}
-
-	outputTrustedCerts(os.Stdout, objects)
+	return findTrustedCerts(cfg, objects)
 }
 
-// parseIgnoreList parses the ignore-list file into ignoreList
-func parseIgnoreList(ignoreListFile io.Reader) {
-	in := bufio.NewReader(ignoreListFile)
-	var lineNo int
+// parseInput parses a certdata.txt file and finds a set of Objects.
+func parseObjects(inFile io.Reader) ([]*Object, error) {
+	var objects []*Object
 
-	for line, eof := getLine(in, &lineNo); !eof; line, eof = getLine(in, &lineNo) {
-		if split := strings.SplitN(line, "#", 2); len(split) == 2 {
-			// this line has an additional comment
-			ignoreList[strings.TrimSpace(split[0])] = strings.TrimSpace(split[1])
-		} else {
-			ignoreList[line] = ""
-		}
-	}
-}
-
-// parseInput parses a certdata.txt file into it's license blob, the CVS id (if
-// included) and a set of Objects.
-func parseInput(inFile io.Reader) (license, cvsId string, objects []*Object) {
 	in := bufio.NewReader(inFile)
 	var lineNo int
 
 	// Discard anything prior to the license block.
 	for line, eof := getLine(in, &lineNo); !eof; line, eof = getLine(in, &lineNo) {
 		if strings.Contains(line, "This Source Code") {
-			license += line
-			license += "\n"
 			break
 		}
-	}
-	if len(license) == 0 {
-		log.Fatalf("Read whole input and failed to find beginning of license")
 	}
 	// Now collect the license block.
 	// certdata.txt from hg.mozilla.org no longer contains CVS_ID.
@@ -141,8 +94,6 @@ func parseInput(inFile io.Reader) (license, cvsId string, objects []*Object) {
 		if strings.Contains(line, "CVS_ID") || len(line) == 0 {
 			break
 		}
-		license += line
-		license += "\n"
 	}
 
 	var currentObject *Object
@@ -154,7 +105,6 @@ func parseInput(inFile io.Reader) (license, cvsId string, objects []*Object) {
 		}
 
 		if strings.HasPrefix(line, "CVS_ID ") {
-			cvsId = line[7:]
 			continue
 		}
 		if line == "BEGINDATA" {
@@ -169,10 +119,10 @@ func parseInput(inFile io.Reader) (license, cvsId string, objects []*Object) {
 			var ok bool
 			value, ok = readMultilineOctal(in, &lineNo)
 			if !ok {
-				log.Fatalf("Failed to read octal value starting at line %d", startingLine)
+				return nil, fmt.Errorf("Failed to read octal value starting at line %d", startingLine)
 			}
 		} else if len(words) < 3 {
-			log.Fatalf("Expected three or more values on line %d, but found %d", lineNo, len(words))
+			return nil, fmt.Errorf("Expected three or more values on line %d, but found %d", lineNo, len(words))
 		} else {
 			value = []byte(strings.Join(words[2:], " "))
 		}
@@ -187,7 +137,7 @@ func parseInput(inFile io.Reader) (license, cvsId string, objects []*Object) {
 			currentObject.startingLine = lineNo
 		}
 		if currentObject == nil {
-			log.Fatalf("Found attribute on line %d which appears to be outside of an object", lineNo)
+			return nil, fmt.Errorf("Found attribute on line %d which appears to be outside of an object", lineNo)
 		}
 		currentObject.attrs[words[0]] = Attribute{
 			attrType: words[1],
@@ -196,22 +146,22 @@ func parseInput(inFile io.Reader) (license, cvsId string, objects []*Object) {
 	}
 
 	if !beginData {
-		log.Fatalf("Read whole input and failed to find BEGINDATA")
+		return nil, fmt.Errorf("Read whole input and failed to find BEGINDATA")
 	}
 
 	if currentObject != nil {
 		objects = append(objects, currentObject)
 	}
 
-	return
+	return objects, nil
 }
 
-// outputTrustedCerts writes a series of PEM encoded certificates to out by
-// finding certificates and their trust records in objects.
-func outputTrustedCerts(out *os.File, objects []*Object) {
+// findTrustedCerts collects a series of certificates and their trust records in objects
+func findTrustedCerts(cfg *Config, objects []*Object) ([]*x509.Certificate, error) {
+	var out []*x509.Certificate
+
 	certs := filterObjectsByClass(objects, "CKO_CERTIFICATE")
 	trusts := filterObjectsByClass(objects, "CKO_NSS_TRUST")
-	filenames := make(map[string]bool)
 
 	for _, cert := range certs {
 		derBytes := cert.attrs["CKA_VALUE"].value
@@ -219,21 +169,10 @@ func outputTrustedCerts(out *os.File, objects []*Object) {
 		hash.Write(derBytes)
 		digest := hash.Sum(nil)
 
-		label := string(cert.attrs["CKA_LABEL"].value)
-		if comment, present := ignoreList[strings.Trim(label, "\"")]; present {
-			var sep string
-			if len(comment) > 0 {
-				sep = ": "
-			}
-			log.Printf("Skipping explicitly ignored certificate: %s%s%s", label, sep, comment)
-			continue
-		}
-
 		x509, err := x509.ParseCertificate(derBytes)
 		if err != nil {
 			// This is known to occur because of a broken certificate in NSS.
 			// https://bugzilla.mozilla.org/show_bug.cgi?id=707995
-			log.Printf("Failed to parse certificate starting on line %d: %s", cert.startingLine, err)
 			continue
 		}
 
@@ -251,14 +190,7 @@ func outputTrustedCerts(out *os.File, objects []*Object) {
 			}
 		}
 
-		if trust == nil {
-			log.Fatalf("No trust found for certificate object starting on line %d (sha1: %x)", cert.startingLine, digest)
-		}
-
 		trustType := trust.attrs["CKA_TRUST_SERVER_AUTH"].value
-		if len(trustType) == 0 {
-			log.Fatalf("No CKA_TRUST_SERVER_AUTH found in trust starting at line %d", trust.startingLine)
-		}
 
 		var trusted bool
 		switch string(trustType) {
@@ -271,62 +203,16 @@ func outputTrustedCerts(out *os.File, objects []*Object) {
 		case "CKT_NSS_TRUST_UNKNOWN", "CKT_NSS_MUST_VERIFY_TRUST":
 			// A cert not trusted for issuing SSL server certs, but is trusted for other purposes.
 			trusted = false
-		default:
-			log.Fatalf("Unknown trust value '%s' found for trust record starting on line %d", trustType, trust.startingLine)
 		}
 
-		if !trusted && !*includedUntrustedFlag {
+		if !trusted && !cfg.IncludedUntrustedFlag {
 			continue
 		}
 
-		block := &pem.Block{Type: "CERTIFICATE", Bytes: derBytes}
-
-		if *toFiles {
-			if strings.HasPrefix(label, "\"") {
-				label = label[1:]
-			}
-			if strings.HasSuffix(label, "\"") {
-				label = label[:len(label)-1]
-			}
-			// The label may contain hex-escaped, UTF-8 charactors.
-			label = unescapeLabel(label)
-			label = strings.Replace(label, " ", "_", -1)
-			label = strings.Replace(label, "/", "_", -1)
-
-			filename := label
-			for i := 2; ; i++ {
-				if _, ok := filenames[filename]; !ok {
-					break
-				}
-
-				filename = label + "-" + strconv.Itoa(i)
-			}
-			filenames[filename] = true
-
-			file, err := os.Create(filename + ".pem")
-			if err != nil {
-				log.Fatalf("Failed to create output file: %s\n", err)
-			}
-			pem.Encode(file, block)
-			file.Close()
-			out.WriteString(filename + ".pem\n")
-			continue
-		}
-
-		out.WriteString("\n")
-		if !trusted {
-			out.WriteString("# NOT TRUSTED FOR SSL\n")
-		}
-
-		out.WriteString("# Issuer: " + nameToString(x509.Issuer) + "\n")
-		out.WriteString("# Subject: " + nameToString(x509.Subject) + "\n")
-		out.WriteString("# Label: " + label + "\n")
-		out.WriteString("# Serial: " + x509.SerialNumber.String() + "\n")
-		out.WriteString("# MD5 Fingerprint: " + fingerprintString(crypto.MD5, x509.Raw) + "\n")
-		out.WriteString("# SHA1 Fingerprint: " + fingerprintString(crypto.SHA1, x509.Raw) + "\n")
-		out.WriteString("# SHA256 Fingerprint: " + fingerprintString(crypto.SHA256, x509.Raw) + "\n")
-		pem.Encode(out, block)
+		out = append(out, x509)
 	}
+
+	return out, nil
 }
 
 // nameToString converts name into a string representation containing the
@@ -381,7 +267,6 @@ func readMultilineOctal(in *bufio.Reader, lineNo *int) ([]byte, bool) {
 			}
 			v, err := strconv.ParseUint(octalStr, 8, 8)
 			if err != nil {
-				log.Printf("error converting octal string '%s' on line %d", octalStr, *lineNo)
 				return nil, false
 			}
 			value = append(value, byte(v))
@@ -395,15 +280,9 @@ func readMultilineOctal(in *bufio.Reader, lineNo *int) ([]byte, bool) {
 // getLine reads the next line from in, aborting in the event of an error.
 func getLine(in *bufio.Reader, lineNo *int) (string, bool) {
 	*lineNo++
-	line, isPrefix, err := in.ReadLine()
+	line, _, err := in.ReadLine()
 	if err == io.EOF {
 		return "", true
-	}
-	if err != nil {
-		log.Fatalf("I/O error while reading input: %s", err)
-	}
-	if isPrefix {
-		log.Fatalf("Line too long while reading line %d", *lineNo)
 	}
 	return string(line), false
 }
